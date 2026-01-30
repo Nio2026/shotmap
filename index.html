@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shot Map</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e90ff">
+
+<style>
+body{margin:0;font-family:Arial;background:#ccc}
+.topbar{display:flex;gap:8px;padding:8px;background:#eee;flex-wrap:wrap}
+.topbar button.active{background:#1e90ff;color:#fff}
+.controls{display:flex;gap:8px;padding:8px;background:#f4f4f4;flex-wrap:wrap;align-items:center}
+button,select{padding:6px 10px}
+.page{display:none}
+.page.active{display:block}
+
+.field{
+ position:relative;
+ width:100vw;
+ height:calc(100vh - 220px);
+ overflow:hidden;
+ background:#f5f5f5;
+ touch-action:none;
+}
+.field img{
+ position:absolute;
+ inset:0;
+ width:100%;
+ height:100%;
+ object-fit:contain;
+ pointer-events:none;
+}
+
+.dot{
+ position:absolute;
+ width:22px;
+ height:22px;
+ border-radius:50%;
+ font-size:11px;
+ font-weight:bold;
+ display:flex;
+ align-items:center;
+ justify-content:center;
+ touch-action:none;
+ cursor:grab;
+}
+.dot:active{cursor:grabbing}
+
+.heat-shot{
+ box-shadow:0 0 14px rgba(255,0,0,.6),0 0 30px rgba(255,0,0,.4);
+ opacity:.85;
+}
+
+.panel{background:#fff;padding:8px;font-size:13px}
+
+@media print{
+ .topbar,.controls,.panel{display:none}
+ .field{height:100vh}
+}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+ <button id="btnA" class="active" onclick="switchTeam('A')">TEAM A</button>
+ <button id="btnB" onclick="switchTeam('B')">TEAM B</button>
+ <button onclick="toggleHeatmap()">🔥 Heatmap</button>
+ <button onclick="undo()">↩ Undo</button>
+ <button onclick="redo()">↪ Redo</button>
+ <button onclick="setPDF('A4')">PDF A4</button>
+ <button onclick="setPDF('A3')">PDF A3</button>
+ <button onclick="savePDF()">🖨 PDF</button>
+</div>
+
+<!-- TEAM A -->
+<div id="teamA" class="page active">
+ <div class="controls">
+  Παίκτης:
+  <select id="playerA"></select>
+  <button onclick="addPair('A','goal')">+ Γκολ</button>
+  <button onclick="addPair('A','shot')">+ Σουτ</button>
+  <span id="counterA"></span>
+ </div>
+ <div class="field" id="fieldA"><img src="goals-shot-gray.png"></div>
+</div>
+
+<!-- TEAM B -->
+<div id="teamB" class="page">
+ <div class="controls">
+  Παίκτης:
+  <select id="playerB"></select>
+  <button onclick="addPair('B','goal')">+ Γκολ</button>
+  <button onclick="addPair('B','shot')">+ Σουτ</button>
+  <span id="counterB"></span>
+ </div>
+ <div class="field" id="fieldB"><img src="goals-shot-gray.png"></div>
+</div>
+
+<div class="panel">
+ <b>👥 Παίκτες</b>
+ <button onclick="exportPlayers('json')">Export JSON</button>
+ <button onclick="exportPlayers('csv')">Export CSV</button>
+ <div id="players"></div>
+</div>
+
+<script>
+const colors={
+ A:{goal:"#1e90ff",shot:"#2ecc71"},
+ B:{goal:"#ff8f96",shot:"#b5fd41"}
+};
+
+let state={A:[],B:[]};
+let history=[],redoStack=[];
+let currentTeam="A";
+let activeDot=null;
+let heatmap={A:false,B:false};
+
+/* 🔢 ROSTER 1–15 */
+const roster={
+ A:Array.from({length:15},(_,i)=>i+1),
+ B:Array.from({length:15},(_,i)=>i+1)
+};
+
+function initPlayers(){
+ ["A","B"].forEach(t=>{
+  const sel=document.getElementById("player"+t);
+  sel.innerHTML="";
+  roster[t].forEach(p=>{
+   const o=document.createElement("option");
+   o.value=p;
+   o.textContent="#"+p;
+   sel.appendChild(o);
+  });
+ });
+}
+initPlayers();
+
+/* STATE */
+function saveState(){history.push(JSON.stringify(state));redoStack=[]}
+
+/* TEAM */
+function switchTeam(t){
+ currentTeam=t;
+ document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+ document.getElementById("team"+t).classList.add("active");
+ btnA.classList.toggle("active",t==="A");
+ btnB.classList.toggle("active",t==="B");
+ render();
+}
+
+/* ADD */
+function addPair(team,type){
+ saveState();
+ const player=document.getElementById("player"+team).value;
+ const pair=Date.now()+Math.random();
+ for(let i=0;i<2;i++){
+  state[team].push({id:pair+"_"+i,pair,team,type,player,x:50,y:50});
+ }
+ render();
+}
+
+/* DRAG + DELETE */
+function makeDraggable(el,d){
+ let timer;
+ el.addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  activeDot=d;
+  el.setPointerCapture(e.pointerId);
+  timer=setTimeout(()=>{
+   if(confirm("Διαγραφή;")){
+    saveState();
+    state[d.team]=state[d.team].filter(x=>x.id!==d.id);
+    render();
+   }
+  },700);
+ });
+ el.addEventListener("pointermove",e=>{
+  clearTimeout(timer);
+  if(!activeDot)return;
+  const f=document.getElementById("field"+d.team).getBoundingClientRect();
+  d.x=Math.max(0,Math.min(100,((e.clientX-f.left)/f.width)*100));
+  d.y=Math.max(0,Math.min(100,((e.clientY-f.top)/f.height)*100));
+  el.style.left=d.x+"%";
+  el.style.top=d.y+"%";
+ });
+ el.addEventListener("pointerup",()=>{activeDot=null;clearTimeout(timer)});
+}
+
+/* RENDER */
+function render(){
+ ["A","B"].forEach(t=>{
+  const field=document.getElementById("field"+t);
+  field.querySelectorAll(".dot").forEach(x=>x.remove());
+  state[t].forEach(d=>{
+   const el=document.createElement("div");
+   el.className="dot";
+   if(heatmap[t]&&d.type==="shot") el.classList.add("heat-shot");
+   el.style.background=colors[t][d.type];
+   el.style.left=d.x+"%";
+   el.style.top=d.y+"%";
+   el.textContent=d.player;
+   makeDraggable(el,d);
+   field.appendChild(el);
+  });
+  updateCounter(t);
+ });
+ renderPlayers();
+ localStorage.setItem("shotmap",JSON.stringify(state));
+}
+
+/* COUNTERS */
+function updateCounter(t){
+ const g=new Set(),s=new Set();
+ state[t].forEach(d=>d.type==="goal"?g.add(d.pair):s.add(d.pair));
+ document.getElementById("counter"+t).innerText=`Γκολ:${g.size} | Σουτ:${s.size}`;
+}
+
+/* PLAYERS PANEL */
+function renderPlayers(){
+ const box=document.getElementById("players");
+ box.innerHTML="";
+ ["A","B"].forEach(t=>{
+  const map={};
+  state[t].forEach(d=>{
+   map[d.player]=map[d.player]||{goal:0,shot:0};
+   map[d.player][d.type]++;
+  });
+  for(const p in map){
+   box.innerHTML+=`TEAM ${t} #${p} | Γ:${map[p].goal/2} Σ:${map[p].shot/2}<br>`;
+  }
+ });
+}
+
+/* EXPORT */
+function exportPlayers(type){
+ const rows=[];
+ ["A","B"].forEach(t=>{
+  const map={};
+  state[t].forEach(d=>{
+   map[d.player]=map[d.player]||{goal:0,shot:0};
+   map[d.player][d.type]++;
+  });
+  for(const p in map){
+   rows.push({team:t,player:p,goals:map[p].goal/2,shots:map[p].shot/2});
+  }
+ });
+ if(type==="json"){
+  download("players.json",JSON.stringify(rows,null,2));
+ }else{
+  let csv="team,player,goals,shots\n";
+  rows.forEach(r=>csv+=`${r.team},${r.player},${r.goals},${r.shots}\n`);
+  download("players.csv",csv);
+ }
+}
+function download(name,data){
+ const a=document.createElement("a");
+ a.href=URL.createObjectURL(new Blob([data]));
+ a.download=name;
+ a.click();
+}
+
+/* UNDO / REDO */
+function undo(){
+ if(!history.length)return;
+ redoStack.push(JSON.stringify(state));
+ state=JSON.parse(history.pop());
+ render();
+}
+function redo(){
+ if(!redoStack.length)return;
+ history.push(JSON.stringify(state));
+ state=JSON.parse(redoStack.pop());
+ render();
+}
+
+/* HEATMAP */
+function toggleHeatmap(){
+ heatmap[currentTeam]=!heatmap[currentTeam];
+ render();
+}
+
+/* PDF */
+function setPDF(s){document.body.style.zoom=s==="A3"?"1.3":"1"}
+function savePDF(){window.print()}
+
+/* LOAD */
+state=JSON.parse(localStorage.getItem("shotmap")||'{"A":[],"B":[]}');
+render();
+
+if("serviceWorker" in navigator){
+ navigator.serviceWorker.register("sw.js");
+}
+</script>
+
+</body>
+</html>

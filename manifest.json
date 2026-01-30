@@ -1,0 +1,16 @@
+{
+  "name": "Shot Map",
+  "short_name": "ShotMap",
+  "start_url": "index.html",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#cccccc",
+  "theme_color": "#1e90ff",
+  "icons": [
+    {
+      "src": "goals-shot-gray.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
